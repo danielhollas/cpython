@@ -1,12 +1,10 @@
 """Filename globbing utility."""
 
-import contextlib
 import os
-import re
-import fnmatch
 import functools
 import itertools
 import operator
+#import re
 import stat
 import sys
 
@@ -106,6 +104,8 @@ def _iglob(pathname, root_dir, dir_fd, recursive, dironly,
 # takes a literal basename (so it only has to check for its existence).
 
 def _glob1(dirname, pattern, dir_fd, dironly, include_hidden=False):
+    import fnmatch
+
     names = _listdir(dirname, dir_fd, dironly)
     if not (include_hidden or _ishidden(pattern)):
         names = (x for x in names if not _ishidden(x))
@@ -184,6 +184,7 @@ def _iterdir(dirname, dir_fd, dironly):
         return
 
 def _listdir(dirname, dir_fd, dironly):
+    import contextlib
     with contextlib.closing(_iterdir(dirname, dir_fd, dironly)) as it:
         return list(it)
 
@@ -227,14 +228,20 @@ def _join(dirname, basename):
         return dirname or basename
     return os.path.join(dirname, basename)
 
-magic_check = re.compile('([*?[])')
-magic_check_bytes = re.compile(b'([*?[])')
+@functools.cache
+def _magic_check_re():
+    import re
+    return re.compile('([*?[])')
+
+def _magic_check_bytes_re():
+    import re
+    return re.compile(b'([*?[])')
 
 def has_magic(s):
     if isinstance(s, bytes):
-        match = magic_check_bytes.search(s)
+        match = _magic_check_bytes_re().search(s)
     else:
-        match = magic_check.search(s)
+        match = _magic_check_re().search(s)
     return match is not None
 
 def _ishidden(path):
@@ -253,9 +260,9 @@ def escape(pathname):
     # Metacharacters do not work in the drive part and shouldn't be escaped.
     drive, pathname = os.path.splitdrive(pathname)
     if isinstance(pathname, bytes):
-        pathname = magic_check_bytes.sub(br'[\1]', pathname)
+        pathname = _magic_check_bytes_re().sub(br'[\1]', pathname)
     else:
-        pathname = magic_check.sub(r'[\1]', pathname)
+        pathname = _magic_check_re().sub(r'[\1]', pathname)
     return drive + pathname
 
 
@@ -277,6 +284,9 @@ def translate(pat, *, recursive=False, include_hidden=False, seps=None):
     used to split the pattern into segments and match path separators. If not
     given, os.path.sep and os.path.altsep (where available) are used.
     """
+    import fnmatch
+    import re
+
     if not seps:
         if os.path.altsep:
             seps = (os.path.sep, os.path.altsep)
@@ -323,6 +333,8 @@ def translate(pat, *, recursive=False, include_hidden=False, seps=None):
 def _compile_pattern(pat, sep, case_sensitive, recursive=True):
     """Compile given glob pattern to a re.Pattern object (observing case
     sensitivity)."""
+    import re
+
     flags = re.NOFLAG if case_sensitive else re.IGNORECASE
     regex = translate(pat, recursive=recursive, include_hidden=True, seps=sep)
     return re.compile(regex, flags=flags).match
@@ -386,7 +398,7 @@ class _GlobberBase:
             selector = self.recursive_selector
         elif part in _special_parts:
             selector = self.special_selector
-        elif not self.case_pedantic and magic_check.search(part) is None:
+        elif not self.case_pedantic and _magic_check_re().search(part) is None:
             selector = self.literal_selector
         else:
             selector = self.wildcard_selector
@@ -409,7 +421,7 @@ class _GlobberBase:
         # Optimization: consume and join any subsequent literal parts here,
         # rather than leaving them for the next selector. This reduces the
         # number of string concatenation operations and calls to add_slash().
-        while parts and magic_check.search(parts[-1]) is None:
+        while parts and _magic_check_re().search(parts[-1]) is None:
             part += self.sep + parts.pop()
 
         select_next = self.selector(parts)
